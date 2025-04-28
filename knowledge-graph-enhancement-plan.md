@@ -4,190 +4,32 @@
 
 This document outlines a plan to incrementally enhance the Memento MCP knowledge graph system to support:
 
-1. Multiple node labels beyond the base `Entity` label
-2. Metadata for entities, similar to what's available for relations
+1. ✅ Multiple node labels beyond the base `Entity` label
+2. ✅ Metadata for entities, similar to what's available for relations
 3. Native Neo4j relationship types instead of a single `RELATES_TO` type
 4. Updated ontology tools to visualize and manage these enhancements
 
 The goal is to create a more flexible and expressive knowledge graph system while maintaining backward compatibility and performance.
 
-## Phase 1: Entity Enhancement (Weeks 1-2)
+## Phase 1: Entity Enhancement (Weeks 1-2) - ✅ COMPLETED
 
-### 1.1 Multiple Node Labels
+### 1.1 Multiple Node Labels - ✅ COMPLETED
 
-**Current State**: All nodes have a single `Entity` label with an `entityType` property.
+**Implementation Details:**
+- Added `sanitizeLabel` method to ensure entity type is a valid Neo4j label
+- Modified `createEntities` to automatically apply the entity type as a label: `CREATE (e:Entity:${sanitizedLabel} {...})`
+- Updated `saveGraph` to include the entity type as a label for imported entities
+- Updated `addObservations` to include the entity type as a label when creating new entity versions
+- Implemented `addLabelToEntity` method to manually add additional custom labels to entities
+- Added tool endpoint `add_label` for programmatic label addition
 
-**Enhancement**:
-- Keep the `Entity` label as a base label for all nodes
-- Add the `entityType` value as an additional label automatically
-- Support custom labels beyond `entityType`
+### 1.2 Entity Metadata - ✅ COMPLETED
 
-**Implementation Steps**:
-
-1. **Update `Neo4jStorageProvider.createEntities` method**:
-
-```typescript
-async createEntities(entities: any[]): Promise<any[]> {
-  // ...existing code...
-  
-  const query = `
-    UNWIND $entities as entity
-    MERGE (e:Entity {name: entity.name})
-    ON CREATE SET 
-      e.id = entity.id,
-      e.name = entity.name,
-      e.entityType = entity.entityType,
-      e.observations = entity.observations,
-      e.version = 1,
-      e.createdAt = entity.createdAt,
-      e.updatedAt = entity.updatedAt,
-      e.validFrom = entity.validFrom,
-      e.validTo = entity.validTo,
-      e.changedBy = entity.changedBy
-      
-    // Set the entityType as an additional label
-    WITH e, entity
-    CALL apoc.create.addLabels([e], [entity.entityType]) YIELD node
-    
-    // Add any additional custom labels
-    WITH node, entity
-    CALL apoc.do.when(
-      entity.labels IS NOT NULL AND size(entity.labels) > 0,
-      'CALL apoc.create.addLabels([node], entity.labels) YIELD node RETURN node',
-      'RETURN node'
-    ) YIELD value
-    
-    RETURN node as e
-  `;
-  
-  // ...rest of method...
-}
-```
-
-2. **Update Entity interface to support custom labels**:
-
-```typescript
-interface Entity {
-  name: string;
-  entityType: string;
-  observations: string[];
-  embedding?: EntityEmbedding;
-  // New properties
-  labels?: string[];
-  metadata?: Record<string, any>;
-}
-```
-
-3. **Update Neo4j schema manager to handle dynamic labels**:
-   - Ensure proper indexing for commonly used labels
-   - Create a maintenance job to optimize indexes for frequently used labels
-
-**Migration Strategy**:
-- Create a one-time migration script to add entityType as a label to all existing nodes
-- Add a feature flag to enable/disable the auto-labeling behavior
-
-**Testing**:
-- Verify that existing operations work with additional labels
-- Test search performance with and without label-based filtering
-- Benchmark query performance before and after changes
-
-### 1.2 Entity Metadata
-
-**Current State**: Entities only have predefined properties with no flexible metadata.
-
-**Enhancement**:
-- Add a `metadata` property to entities similar to relations
-- Support arbitrary JSON values in metadata
-- Allow searching within metadata properties
-
-**Implementation Steps**:
-
-1. **Update Entity interface**:
-```typescript
-interface Entity {
-  // Existing properties
-  name: string;
-  entityType: string;
-  observations: string[];
-  embedding?: EntityEmbedding;
-  // New property
-  metadata?: Record<string, any>;
-}
-```
-
-2. **Update `Neo4jStorageProvider.createEntities` method**:
-```typescript
-async createEntities(entities: any[]): Promise<any[]> {
-  // ...existing code...
-  
-  const query = `
-    UNWIND $entities as entity
-    MERGE (e:Entity {name: entity.name})
-    ON CREATE SET 
-      // ...existing properties...
-      e.metadata = entity.metadata
-  `;
-  
-  // ...rest of method...
-}
-```
-
-3. **Update `getEntityTextForEmbedding` to include metadata in embeddings**:
-```typescript
-private getEntityTextForEmbedding(entity: Entity): string {
-  // Combine entity name, type, and observations into a single text
-  const name = entity.name || '';
-  const type = entity.entityType || '';
-  const observations = Array.isArray(entity.observations) ? entity.observations.join('\n') : '';
-  
-  // Add metadata if it exists
-  let metadataText = '';
-  if (entity.metadata && Object.keys(entity.metadata).length > 0) {
-    metadataText = '\nMetadata:\n' + 
-      Object.entries(entity.metadata)
-        .map(([key, value]) => `- ${key}: ${JSON.stringify(value)}`)
-        .join('\n');
-  }
-  
-  return `${name} - ${type}\n${observations}${metadataText}`;
-}
-```
-
-4. **Update search capabilities to support metadata**:
-```typescript
-async searchNodes(query: string, options: SearchOptions = {}): Promise<KnowledgeGraph> {
-  // ...existing code...
-  
-  const searchQuery = `
-    CALL db.index.fulltext.queryNodes("entity_fulltext", $query) YIELD node, score
-    WHERE node:Entity
-      AND (node.validTo IS NULL OR node.validTo > $currentTime)
-    OPTIONAL MATCH (node)-[r:RELATES_TO]->(related)
-      WHERE (r.validTo IS NULL OR r.validTo > $currentTime)
-      AND (related.validTo IS NULL OR related.validTo > $currentTime)
-    // Add metadata handling
-    WITH node, score, collect(related) as relatedNodes, 
-         CASE WHEN node.metadata IS NOT NULL 
-              THEN node.metadata 
-              ELSE {} END as metadata
-    // Add metadata scoring logic here if needed
-    RETURN DISTINCT node, score, relatedNodes
-    ORDER BY score DESC
-    LIMIT $limit
-  `;
-  
-  // ...rest of method...
-}
-```
-
-**Migration Strategy**:
-- Add a maintenance job to initialize empty metadata objects for existing entities
-- Create test utilities to help migrate specific property data into metadata
-
-**Testing**:
-- Verify embeddings correctly incorporate metadata
-- Test search relevance with various metadata values
-- Ensure metadata updates trigger appropriate embedding updates
+**Implementation Details:**
+- Metadata is now supported for entities via the `metadata` property
+- Entity creation and updates handle metadata properly
+- Search operations include metadata
+- Embeddings include metadata in generated text for improved semantic search
 
 ## Phase 2: Native Relationship Types (Weeks 3-4)
 
