@@ -81,6 +81,7 @@ interface EntityNode {
   name: string;
   entityType: string;
   observations: string; // JSON string of observations array
+  metadata?: string; // JSON string of metadata object
   version: number;
   createdAt: number;
   updatedAt: number;
@@ -239,10 +240,21 @@ export class Neo4jStorageProvider implements StorageProvider {
     const observations = node.observations ? 
       JSON.parse(node.observations) : [];
     
+    // Parse metadata if it exists
+    let metadata: Record<string, any> | undefined;
+    if (node.metadata) {
+      try {
+        metadata = JSON.parse(node.metadata);
+      } catch (error) {
+        logger.warn(`Failed to parse metadata for entity ${node.name}`, error);
+      }
+    }
+    
     return {
       name: node.name,
       entityType: node.entityType,
       observations,
+      metadata,
       id: node.id,
       version: node.version,
       createdAt: node.createdAt,
@@ -366,6 +378,7 @@ export class Neo4jStorageProvider implements StorageProvider {
               name: entity.name,
               entityType: entity.entityType,
               observations: JSON.stringify(entity.observations || []),
+              metadata: entity.metadata ? JSON.stringify(entity.metadata) : null,
               version: extendedEntity.version || 1,
               createdAt: extendedEntity.createdAt || Date.now(),
               updatedAt: extendedEntity.updatedAt || Date.now(),
@@ -381,6 +394,7 @@ export class Neo4jStorageProvider implements StorageProvider {
                 name: $name,
                 entityType: $entityType,
                 observations: $observations,
+                metadata: $metadata,
                 version: $version,
                 createdAt: $createdAt,
                 updatedAt: $updatedAt,
@@ -665,6 +679,7 @@ export class Neo4jStorageProvider implements StorageProvider {
               name: entity.name,
               entityType: entity.entityType,
               observations: JSON.stringify(entity.observations || []),
+              metadata: entity.metadata ? JSON.stringify(entity.metadata) : null,
               version: 1,
               createdAt: entity.createdAt || now,
               updatedAt: entity.updatedAt || now,
@@ -681,6 +696,7 @@ export class Neo4jStorageProvider implements StorageProvider {
                 name: $name,
                 entityType: $entityType,
                 observations: $observations,
+                metadata: $metadata,
                 version: $version,
                 createdAt: $createdAt,
                 updatedAt: $updatedAt,
@@ -799,7 +815,6 @@ export class Neo4jStorageProvider implements StorageProvider {
                 validTo: $validTo,
                 changedBy: $changedBy
               }]->(to)
-              RETURN r, from, to
             `;
             
             // Execute query
@@ -1415,9 +1430,9 @@ export class Neo4jStorageProvider implements StorageProvider {
               metadata: $metadata,
               version: $version,
               createdAt: $createdAt,
-              updatedAt: $now,
-              validFrom: $now,
-              validTo: null,
+              updatedAt: $updatedAt,
+              validFrom: $validFrom,
+              validTo: $validTo,
               changedBy: $changedBy
             }]->(to)
           `;
@@ -1433,7 +1448,9 @@ export class Neo4jStorageProvider implements StorageProvider {
             metadata: relation.metadata ? JSON.stringify(relation.metadata) : currentRel.metadata,
             version: newVersion,
             createdAt: currentRel.createdAt,
-            now,
+            updatedAt: currentRel.updatedAt,
+            validFrom: currentRel.validFrom,
+            validTo: currentRel.validTo,
             changedBy: extendedRelation.changedBy || null
           };
           
@@ -1736,6 +1753,22 @@ export class Neo4jStorageProvider implements StorageProvider {
             embedding: embedding.vector,
             now: Date.now()
           });
+          
+          // If embedding needs to be updated, schedule it
+          if (embedding.vector.length > 0) {
+            // Schedule embedding generation with appropriate error handling
+            if (this.embeddingService) {
+              // We'll handle this outside the transaction to avoid blocking
+              setTimeout(() => {
+                this.updateEntityEmbedding(entityName, { 
+                  model: 'auto', 
+                  vector: [],
+                  lastUpdated: Date.now() 
+                })
+                  .catch((error: Error) => logger.error(`Error updating embedding for ${entityName}`, error));
+              }, 0);
+            }
+          }
           
           // Commit transaction
           await txc.commit();
@@ -2274,6 +2307,199 @@ export class Neo4jStorageProvider implements StorageProvider {
       return {
         error: error instanceof Error ? error.message : String(error)
       };
+    }
+  }
+
+  /**
+   * Update an entity with new properties
+   * @param entityName Name of entity to update
+   * @param updates Properties to update
+   * @returns Updated entity
+   */
+  async updateEntity(entityName: string, updates: Partial<Entity>): Promise<Entity> {
+    try {
+      if (!entityName) {
+        throw new Error('Entity name is required for updates');
+      }
+
+      if (Object.keys(updates).length === 0) {
+        throw new Error('No updates provided');
+      }
+
+      // Get current entity to ensure it exists
+      const existingEntity = await this.getEntity(entityName);
+      if (!existingEntity) {
+        throw new Error(`Entity with name ${entityName} not found`);
+      }
+
+      const session = await this.connectionManager.getSession();
+      try {
+        const txc = session.beginTransaction();
+        const now = Date.now();
+
+        try {
+          // Create a new version of the entity
+          const entityId = uuidv4();
+          const version = existingEntity.version ? existingEntity.version + 1 : 1;
+
+          // Prepare updated properties
+          const updatedObservations = updates.observations || existingEntity.observations;
+          const updatedEntityType = updates.entityType || existingEntity.entityType;
+          
+          // Merge metadata if provided, or use existing
+          let updatedMetadata = existingEntity.metadata || {};
+          if (updates.metadata) {
+            updatedMetadata = {
+              ...updatedMetadata,
+              ...updates.metadata
+            };
+          }
+
+          // Mark existing entity as invalid
+          await txc.run(`
+            MATCH (e:Entity {name: $name})
+            WHERE (e.validTo IS NULL OR e.validTo > $now)
+            SET e.validTo = $now
+            RETURN e
+          `, { name: entityName, now });
+
+          // Create new version with updated properties
+          const params = {
+            id: entityId,
+            name: entityName,
+            entityType: updatedEntityType,
+            observations: JSON.stringify(updatedObservations),
+            metadata: Object.keys(updatedMetadata).length > 0 ? JSON.stringify(updatedMetadata) : null,
+            version,
+            createdAt: existingEntity.createdAt || now,
+            updatedAt: now,
+            validFrom: now,
+            validTo: null,
+            changedBy: null
+          };
+
+          const createQuery = `
+            CREATE (e:Entity {
+              id: $id,
+              name: $name,
+              entityType: $entityType,
+              observations: $observations,
+              metadata: $metadata,
+              version: $version,
+              createdAt: $createdAt,
+              updatedAt: $updatedAt,
+              validFrom: $validFrom,
+              validTo: $validTo,
+              changedBy: $changedBy
+            })
+            RETURN e
+          `;
+
+          const result = await txc.run(createQuery, params);
+          
+          // If embedding needs to be updated, schedule it
+          if (updates.observations || updates.metadata) {
+            // Schedule a task to update the embedding without blocking the transaction
+            setTimeout(async () => {
+              try {
+                // Force update the embedding for this entity
+                logger.debug(`Updating embedding for ${entityName} due to observation or metadata change`);
+                if (this.embeddingService) {
+                  // Get the updated entity
+                  const updatedEntity = await this.getEntity(entityName);
+                  if (updatedEntity) {
+                    // Prepare the entity text (similar to EmbeddingJobManager._prepareEntityText)
+                    const lines = [
+                      `Name: ${updatedEntity.name}`,
+                      `Type: ${updatedEntity.entityType}`,
+                      'Observations:'
+                    ];
+                    
+                    // Process observations
+                    if (updatedEntity.observations) {
+                      // Handle different formats of observations
+                      let observationsArray = updatedEntity.observations;
+                      if (typeof observationsArray === 'string') {
+                        try {
+                          observationsArray = JSON.parse(observationsArray);
+                        } catch {
+                          observationsArray = [observationsArray];
+                        }
+                      }
+                      if (!Array.isArray(observationsArray)) {
+                        observationsArray = [String(observationsArray)];
+                      }
+                      if (observationsArray.length > 0) {
+                        lines.push(...observationsArray.map((obs: string) => `- ${obs}`));
+                      } else {
+                        lines.push('  (No observations)');
+                      }
+                    } else {
+                      lines.push('  (No observations)');
+                    }
+                    
+                    // Add metadata if available
+                    if (updatedEntity.metadata && Object.keys(updatedEntity.metadata).length > 0) {
+                      lines.push('', 'Metadata:');
+                      
+                      for (const [key, value] of Object.entries(updatedEntity.metadata)) {
+                        // Format the value appropriately
+                        let formattedValue = value;
+                        if (typeof value === 'object' && value !== null) {
+                          formattedValue = JSON.stringify(value);
+                        }
+                        lines.push(`- ${key}: ${formattedValue}`);
+                      }
+                    }
+                    
+                    const text = lines.join('\n');
+                    
+                    // Generate new embedding
+                    logger.debug(`Generating embedding for text: ${text.substring(0, 100)}...`);
+                    const embedding = await this.embeddingService.generateEmbedding(text);
+                    const modelInfo = this.embeddingService.getModelInfo();
+                    
+                    // Store the new embedding
+                    await this.updateEntityEmbedding(entityName, {
+                      vector: embedding,
+                      model: modelInfo.name,
+                      lastUpdated: Date.now()
+                    });
+                    
+                    logger.info(`Successfully updated embedding for entity ${entityName}`);
+                  }
+                } else {
+                  logger.warn(`Cannot update embedding for ${entityName} - no embedding service available`);
+                }
+              } catch (error) {
+                logger.error(`Failed to update embedding for ${entityName}`, error);
+              }
+            }, 0);
+          }
+
+          await txc.commit();
+
+          // Convert Neo4j node to entity
+          if (result.records.length > 0) {
+            const node = result.records[0].get('e').properties;
+            const updatedEntity = this.nodeToEntity(node);
+
+            logger.info(`Updated entity: ${entityName} (version ${version})`);
+            return updatedEntity;
+          }
+
+          throw new Error(`Failed to create updated entity: ${entityName}`);
+        } catch (error) {
+          await txc.rollback();
+          throw error;
+        }
+      } finally {
+        // Close session
+        await session.close();
+      }
+    } catch (error) {
+      logger.error(`Error updating entity ${entityName}`, error);
+      throw error;
     }
   }
 } 

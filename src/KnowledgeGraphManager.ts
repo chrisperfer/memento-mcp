@@ -14,6 +14,7 @@ export interface Entity {
   entityType: string;
   observations: string[];
   embedding?: EntityEmbedding;
+  metadata?: Record<string, any>;
 }
 
 // Re-export the Relation interface for backward compatibility
@@ -1034,47 +1035,64 @@ export class KnowledgeGraphManager {
   }
 
   /**
-   * Update an entity with new properties
-   * 
-   * @param entityName The name of the entity to update
-   * @param updates Properties to update
-   * @returns The updated entity
+   * Update an entity with the provided updates
+   * @param entityName Name of entity to update
+   * @param updates Changes to apply to the entity
    */
   async updateEntity(entityName: string, updates: Partial<Entity>): Promise<Entity> {
-    if (this.storageProvider && typeof (this.storageProvider as any).updateEntity === 'function') {
-      const result = await (this.storageProvider as any).updateEntity(entityName, updates);
-      
-      // Schedule embedding generation if observations were updated
-      if (this.embeddingJobManager && updates.observations) {
-        await this.embeddingJobManager.scheduleEntityEmbedding(entityName, 2);
-      }
-      
-      return result;
+    if (!entityName) {
+      throw new Error("Entity name is required for updates");
     }
-
-    // Fallback implementation
+    
+    if (Object.keys(updates).length === 0) {
+      throw new Error("No updates provided");
+    }
+    
+    // If using a storage provider, delegate to it
+    if (this.storageProvider && typeof (this.storageProvider as any).updateEntity === 'function') {
+      return (this.storageProvider as any).updateEntity(entityName, updates);
+    }
+    
+    // Otherwise, use the file-based approach
     const graph = await this.loadGraph();
+    const entityIndex = graph.entities.findIndex(e => e.name === entityName);
     
-    // Find the entity to update
-    const index = graph.entities.findIndex(e => e.name === entityName);
-    
-    if (index === -1) {
+    if (entityIndex === -1) {
       throw new Error(`Entity with name ${entityName} not found`);
     }
     
-    // Update the entity
-    const updatedEntity = {
-      ...graph.entities[index],
-      ...updates
-    };
+    // Create an updated entity by merging the existing one with updates
+    const existingEntity = graph.entities[entityIndex];
+    const updatedEntity = { ...existingEntity };
     
-    graph.entities[index] = updatedEntity;
+    // Update fields that are provided
+    if (updates.entityType) {
+      updatedEntity.entityType = updates.entityType;
+    }
     
-    // Save the updated graph
+    if (updates.observations) {
+      updatedEntity.observations = [...updates.observations];
+    }
+    
+    if (updates.embedding) {
+      updatedEntity.embedding = updates.embedding;
+    }
+    
+    // Handle metadata updates - merge with existing metadata if present
+    if (updates.metadata) {
+      updatedEntity.metadata = {
+        ...(existingEntity.metadata || {}),
+        ...updates.metadata
+      };
+    }
+    
+    // Replace the entity in the graph
+    graph.entities[entityIndex] = updatedEntity;
+    
     await this.saveGraph(graph);
     
-    // Schedule embedding generation if observations were updated
-    if (this.embeddingJobManager && updates.observations) {
+    // Trigger embedding update if observations or metadata changed
+    if ((updates.observations || updates.metadata) && this.embeddingJobManager) {
       await this.embeddingJobManager.scheduleEntityEmbedding(entityName, 2);
     }
     

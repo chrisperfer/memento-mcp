@@ -755,6 +755,20 @@ export class EmbeddingJobManager {
       lines.push('  (No observations)');
     }
     
+    // Add metadata if available
+    if (entity.metadata && Object.keys(entity.metadata).length > 0) {
+      lines.push('', 'Metadata:');
+      
+      for (const [key, value] of Object.entries(entity.metadata)) {
+        // Format the value appropriately
+        let formattedValue = value;
+        if (typeof value === 'object' && value !== null) {
+          formattedValue = JSON.stringify(value);
+        }
+        lines.push(`- ${key}: ${formattedValue}`);
+      }
+    }
+    
     const text = lines.join('\n');
     
     // Log the prepared text for debugging
@@ -762,6 +776,7 @@ export class EmbeddingJobManager {
       entityName: entity.name, 
       entityType: entity.entityType,
       observationCount: Array.isArray(entity.observations) ? entity.observations.length : 0,
+      metadataCount: entity.metadata ? Object.keys(entity.metadata).length : 0,
       textLength: text.length
     });
     
