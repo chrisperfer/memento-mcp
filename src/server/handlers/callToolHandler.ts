@@ -70,6 +70,9 @@ export async function handleCallToolRequest(request: any, knowledgeGraphManager:
       case "open_nodes":
         return { content: [{ type: "text", text: JSON.stringify(await knowledgeGraphManager.openNodes(args.names), null, 2) }] };
         
+      case "get_ontology":
+        return await toolHandlers.handleGetOntology(args, knowledgeGraphManager);
+        
       case "get_entity_history":
         try {
           const history = await knowledgeGraphManager.getEntityHistory(args.entityName);

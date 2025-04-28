@@ -374,6 +374,20 @@ export async function handleListToolsRequest() {
         required: ["entity_name"],
       },
     },
+    {
+      name: "get_ontology",
+      description: "Get the ontology (entity types and their relationships) from your Memento MCP knowledge graph memory system with counts",
+      inputSchema: {
+        type: "object",
+        properties: {
+          // No parameters required
+          random_string: { 
+            type: "string", 
+            description: "Dummy parameter for no-parameter tools" 
+          }
+        }
+      },
+    },
   ];
 
   // Define the temporal-specific tools
