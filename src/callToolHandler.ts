@@ -143,6 +143,18 @@ export async function handleToolCall(
         return result;
       }
       
+      case 'add_label': {
+        if (!toolCall.args.entityName || !toolCall.args.label) {
+          return { error: 'Both entityName and label are required' };
+        }
+        try {
+          await manager.addLabelToEntity(toolCall.args.entityName, toolCall.args.label);
+          return { result: `Label '${toolCall.args.label}' added to entity '${toolCall.args.entityName}'.` };
+        } catch (error: any) {
+          return { error: error.message };
+        }
+      }
+      
       // ... existing code ...
     }
   } catch (error) {

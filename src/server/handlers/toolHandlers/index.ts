@@ -7,3 +7,4 @@ export { handleCreateRelations } from './createRelations.js';
 export { handleAddObservations } from './addObservations.js';
 export { handleDeleteEntities } from './deleteEntities.js';
 export { handleGetOntology } from './getOntology.js';
+export { handleAddLabel } from './addLabel.js';

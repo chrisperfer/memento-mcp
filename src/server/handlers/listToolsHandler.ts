@@ -153,6 +153,24 @@ export async function handleListToolsRequest() {
       },
     },
     {
+      name: "add_label",
+      description: "Add a Neo4j label to an existing entity node by name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          entityName: {
+            type: "string",
+            description: "The name of the entity to add the label to"
+          },
+          label: {
+            type: "string",
+            description: "The Neo4j label to add to the entity"
+          }
+        },
+        required: ["entityName", "label"]
+      }
+    },
+    {
       name: "delete_entities",
       description: "Delete multiple entities and their associated relations from your Memento MCP knowledge graph memory",
       inputSchema: {

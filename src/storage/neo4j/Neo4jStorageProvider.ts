@@ -2502,4 +2502,28 @@ export class Neo4jStorageProvider implements StorageProvider {
       throw error;
     }
   }
+
+  /**
+   * Add a Neo4j label to an entity node by name
+   * @param entityName The name of the entity
+   * @param label The label to add
+   */
+  public async addLabelToEntity(entityName: string, label: string): Promise<void> {
+    if (!entityName || !label) {
+      throw new Error('Both entityName and label are required');
+    }
+    // Sanitize label (Neo4j labels must start with a letter and contain only alphanumeric and _)
+    if (!/^[_A-Za-z][_0-9A-Za-z]*$/.test(label)) {
+      throw new Error('Invalid label format for Neo4j');
+    }
+    const query = `
+      MATCH (e:Entity {name: $entityName})
+      SET e:` + label + `
+      RETURN e
+    `;
+    const result = await this.connectionManager.executeQuery(query, { entityName });
+    if (result.records.length === 0) {
+      throw new Error(`Entity with name '${entityName}' not found`);
+    }
+  }
 } 

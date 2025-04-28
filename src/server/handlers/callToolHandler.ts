@@ -42,6 +42,9 @@ export async function handleCallToolRequest(request: any, knowledgeGraphManager:
       case "add_observations":
         return await toolHandlers.handleAddObservations(args, knowledgeGraphManager);
         
+      case "add_label":
+        return await toolHandlers.handleAddLabel(args, knowledgeGraphManager);
+        
       case "delete_entities":
         return await toolHandlers.handleDeleteEntities(args, knowledgeGraphManager);
         

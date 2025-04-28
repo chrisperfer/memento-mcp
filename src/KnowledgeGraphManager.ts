@@ -1155,4 +1155,16 @@ export class KnowledgeGraphManager {
     
     return this.storageProvider.getGraphAtTime(timestamp);
   }
+
+  /**
+   * Add a Neo4j label to an entity node by name
+   * @param entityName The name of the entity
+   * @param label The label to add
+   */
+  async addLabelToEntity(entityName: string, label: string): Promise<void> {
+    if (!this.storageProvider || typeof (this.storageProvider as any).addLabelToEntity !== 'function') {
+      throw new Error('Storage provider does not support addLabelToEntity');
+    }
+    return (this.storageProvider as any).addLabelToEntity(entityName, label);
+  }
 }
