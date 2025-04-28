@@ -373,6 +373,8 @@ export class Neo4jStorageProvider implements StorageProvider {
           // Process entities
           for (const entity of graph.entities) {
             const extendedEntity = entity as ExtendedEntity;
+            const sanitizedLabel = this.sanitizeLabel(entity.entityType);
+            
             const params = {
               id: extendedEntity.id || uuidv4(),
               name: entity.name,
@@ -387,9 +389,9 @@ export class Neo4jStorageProvider implements StorageProvider {
               changedBy: extendedEntity.changedBy || null
             };
             
-            // Create entity
+            // Create entity with entityType as a label
             await txc.run(`
-              CREATE (e:Entity {
+              CREATE (e:Entity:${sanitizedLabel} {
                 id: $id,
                 name: $name,
                 entityType: $entityType,
@@ -673,6 +675,9 @@ export class Neo4jStorageProvider implements StorageProvider {
               logger.warn(`Neo4jStorageProvider: Skipping embedding for entity "${entity.name}" - No embedding service available`);
             }
             
+            // Add entityType as a label and sanitize it
+            const sanitizedLabel = this.sanitizeLabel(entity.entityType);
+            
             // Create entity with parameters
             const params = {
               id: entityId,
@@ -689,9 +694,11 @@ export class Neo4jStorageProvider implements StorageProvider {
               embedding: embedding // Add embedding directly to entity
             };
             
-            // Create entity query
+            // Create entity query with dynamic label
+            // Note: We can't parameterize the label directly in Cypher, so we use string concatenation
+            // but the label is sanitized to prevent injection
             const createQuery = `
-              CREATE (e:Entity {
+              CREATE (e:Entity:${sanitizedLabel} {
                 id: $id,
                 name: $name,
                 entityType: $entityType,
@@ -948,8 +955,10 @@ export class Neo4jStorageProvider implements StorageProvider {
             });
             
             // Step 4: Create the new version
+            const sanitizedLabel = this.sanitizeLabel(currentNode.entityType);
+            
             const createQuery = `
-              CREATE (e:Entity {
+              CREATE (e:Entity:${sanitizedLabel} {
                 id: $id,
                 name: $name,
                 entityType: $entityType,
@@ -2525,5 +2534,24 @@ export class Neo4jStorageProvider implements StorageProvider {
     if (result.records.length === 0) {
       throw new Error(`Entity with name '${entityName}' not found`);
     }
+  }
+
+  /**
+   * Sanitize entity type for use as a Neo4j label
+   * @param entityType The entity type string to sanitize
+   * @returns A valid Neo4j label string
+   */
+  private sanitizeLabel(entityType: string): string {
+    if (!entityType) return 'Unknown';
+    
+    // Remove invalid characters (Neo4j labels must start with a letter and contain only alphanumeric and _)
+    const sanitized = entityType.replace(/[^a-zA-Z0-9_]/g, '_');
+    
+    // Ensure it starts with a letter
+    if (!/^[a-zA-Z]/.test(sanitized)) {
+      return 'T_' + sanitized;
+    }
+    
+    return sanitized;
   }
 } 
